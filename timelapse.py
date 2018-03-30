@@ -32,8 +32,9 @@ class timelapse_config(object):
     `brightwidth` : number of previous readings to store for choosing next 
       shutter speed.
     `gamma` : determines size of steps to take when adjusting shutterspeed.
-    ``disable_led` : Whether to disable the LED. 
-  """  
+    `disable_led` : Whether to disable the LED. 
+    `awb`: Set auto white balance mode.
+  """
   def __init__(self, config_map={}):
     self.w = config_map.get('w', 1296)
     self.h = config_map.get('h', 972)
@@ -43,7 +44,8 @@ class timelapse_config(object):
     self.maxshots = config_map.get('maxshots', -1)
     self.targetBrightness = config_map.get('targetBrightness', 128)
     self.maxdelta = config_map.get('maxdelta', 100)
-    
+    self.awb = config_map.get('awb', 'auto')
+
     # Setting the maxss under one second prevents flipping into a slower camera mode.
     self.maxss = config_map.get('maxss', 999000)
     self.minss = config_map.get('minss', 100)
@@ -51,7 +53,7 @@ class timelapse_config(object):
     # Note: these should depend on camera model...
     self.max_fr = config_map.get('minfr', 15)
     self.min_fr = config_map.get('maxfr', 1)
-    
+
     # Dynamic adjustment settings.
     self.brightwidth = config_map.get('brightwidth', 20)
     self.gamma = config_map.get('gamma', 0.2)
@@ -61,11 +63,11 @@ class timelapse_config(object):
   def floatToSS(self, x):
     base = int(self.minss + (self.maxss - self.minss) * x)
     return max(min(base, self.maxss), self.minss)
-  
+
   def SSToFloat(self, ss):
     base = (float(ss) - self.minss) / (self.maxss - self.minss)
     return max(min(base, 1.0), 0.0)
-    
+
   def to_dict(self):
     return {
       'w': self.w,
@@ -83,6 +85,7 @@ class timelapse_config(object):
       'brightwidth': self.brightwidth,
       'gamma': self.gamma,
       'disable_led': self.disable_led,
+      'awb': self.awb,
     }
 
 class timelapse_state(object):
@@ -139,10 +142,13 @@ class timelapse(object):
     # We consider shutterspeeds as a floating point number between 0 and 1,
     # denoting position between the max and min shutterspeed.
     # These two functions let us convert back and forth between representations.
-    
+
     self.state = timelapse_state(config)
     self.camera.framerate = self.state.framerate
-
+    # Set desired awb mode (default = auto)
+    print 'Set AWB mode: ', self.config.awb
+    self.camera.awb_mode = self.config.awb
+    
     print 'Finding initial SS....'
     # Give the camera's auto-exposure and auto-white-balance algorithms
     # some time to measure the scene and determine appropriate values
@@ -157,13 +163,17 @@ class timelapse(object):
     self.camera.awb_mode = 'off'
     self.camera.awb_gains = self.state.wb_gains
 
+# enable awb shade
+#    self.camera.awb_mode = 'shade'
+#    print "Enabled AWB mode 'shade'"
+
     self.findinitialparams(self.config, self.state)
     print "Set up timelapser with: "
     print "\tmaxtime :\t", config.maxtime
     print "\tmaxshots:\t", config.maxshots
     print "\tinterval:\t", config.interval
     print "\tBrightns:\t", config.targetBrightness
-    print "\tSize  :\t", config.w, 'x', config.h    
+    print "\tSize  :\t", config.w, 'x', config.h
 
   def __repr__(self):
     return 'A timelapse instance.'
@@ -171,7 +181,7 @@ class timelapse(object):
   def avgbrightness(self, im, config=None):
     """
     Find the average brightness of the provided image according to the method
-    
+
     Args:
       im: A PIL image.
       config: A timelapseConfig object.  Defaults to self.config.
@@ -198,7 +208,7 @@ class timelapse(object):
     if state is None: state = self.state
 
     delta = config.targetBrightness - state.brData[-1]
-    Adj = lambda v: v * (1.0 + 1.0 * delta * config.gamma 
+    Adj = lambda v: v * (1.0 + 1.0 * delta * config.gamma
                          / config.targetBrightness)
     x = config.SSToFloat(state.currentss)
     x = Adj(x)
@@ -229,9 +239,9 @@ class timelapse(object):
     capstart = time.time()
     self.camera.capture(stream, format='jpeg')
     capend = time.time()
-    print ('Exp: %d\tFR: %f\t Capture Time: %f' 
-           % (self.camera.exposure_speed, 
-              round(float(self.camera.framerate),2), 
+    print ('Exp: %d\tFR: %f\t Capture Time: %f'
+           % (self.camera.exposure_speed,
+              round(float(self.camera.framerate),2),
               round(capend-capstart,2)))
     # "Rewind" the stream to the beginning so we can read its content
     stream.seek(0)
@@ -253,7 +263,7 @@ class timelapse(object):
     cfg['h'] = 96
     cfg['gamma'] = 2.0
     init_config = timelapse_config(cfg)
-    
+
     state.brData = [0]
     state.xData = [0]
 
@@ -396,16 +406,41 @@ def main(argv):
 
 
     parser = argparse.ArgumentParser(description='Timelapse tool for the Raspberry Pi.')
-    parser.add_argument( '-W', '--width', default=1286, type=int, help='Set image width.' )
-    parser.add_argument( '-H', '--height', default=972, type=int, help='Set image height.' )
-    parser.add_argument( '-i', '--interval', default=15, type=int, help='Set photo interval in seconds.  \nRecommended miniumum is 6.' )
-    parser.add_argument( '-t', '--maxtime', default=-1, type=int, help='Maximum duration of timelapse in minutes.\nDefault is -1, for no maximum duration.' )
-    parser.add_argument( '-n', '--maxshots', default=-1, type=int, help='Maximum number of photos to take.\nDefault is -1, for no maximum.' )
-    parser.add_argument( '-b', '--brightness', default=128, type=int, help='Target average brightness of image, on a scale of 1 to 255.\nDefault is 128.' )
-    parser.add_argument( '-d', '--delta', default=128, type=int, help='Maximum allowed distance of photo brightness from target brightness; discards photos too far from the target.  This is useful for autmatically discarding late-night shots.\nDefault is 128; Set to 256 to keep all images.' )
-    parser.add_argument( '-m', '--metering', default='a', type=str, choices=['a','c','l','r'], help='Where to average brightness for brightness calculations.\n"a" measures the whole image, "c" uses a window at the center, "l" meters a strip at the left, "r" uses a strip at the right.' )
-    parser.add_argument( '-L', '--listen', action='store_true', help='Sets the timelapser to listen mode; listens for a master timelapser to tell it when to shoot.' )
+    parser.add_argument( '-W', '--width', default=1286, type=int,
+                         help='Set image width.' )
+    parser.add_argument( '-H', '--height', default=972, type=int,
+                         help='Set image height.' )
+    parser.add_argument( '-i', '--interval', default=15, type=int,
+                         help='Set photo interval in seconds.  \n'
+                         'Recommended miniumum is 6.' )
+    parser.add_argument( '-t', '--maxtime', default=-1, type=int,
+                         help='Maximum duration of timelapse in minutes.\nDefault is -1, '
+                         'for no maximum duration.' )
+    parser.add_argument( '-n', '--maxshots', default=-1, type=int,
+                         help='Maximum number of photos to take.\nDefault is -1, '
+                         'for no maximum.' )
+    parser.add_argument( '-b', '--brightness', default=128, type=int, 
+                         help='Target average brightness of image, on a scale of 1 to 255.\n'
+                         'Default is 128.' )
+    parser.add_argument( '-d', '--delta', default=128, type=int,
+                         help='Maximum allowed distance of photo brightness from target '
+                         'brightness; discards photos too far from the target.  '
+                         'This is useful for autmatically discarding late-night shots.\n'
+                         'Default is 128; Set to 256 to keep all images.' )
+    parser.add_argument( '-m', '--metering', default='a', type=str,
+                         choices=['a','c','l','r'],
+                         help='Where to average brightness for brightness calculations.\n'
+                         '"a" measures the whole image, "c" uses a window at the center,'
+                         ' "l" meters a strip at the left, "r" uses a strip at the right.' )
+    parser.add_argument( '-L', '--listen', action='store_true', 
+                         help='Sets the timelapser to listen mode; listens for a master '
+                         'timelapser to tell it when to shoot.' )
     parser.add_argument( '-I', '--iso', default=100, type=int, help='Set ISO.' )
+    parser.add_argument( '-a', '--awb', default='off', type=str,  
+                         choices=['auto', 'off', 'sunllight','shade','cloudy', 'sunlight', 
+                                  'horizon', 'tungsten', 'fluorescent', 'incandescent',
+                                  'flash'],
+                         help='Set auto white balance, default=off.' )
 
     try:
         os.listdir('/home/pi/pictures')
@@ -422,6 +457,7 @@ def main(argv):
       'targetBrightness': args.brightness,
       'maxdelta': args.delta,
       'iso': args.iso,
+      'awb' : args.awb,
       # Add more configuration options here, if desired.
     }
 
