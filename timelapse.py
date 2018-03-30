@@ -34,6 +34,8 @@ class timelapse_config(object):
     `gamma` : determines size of steps to take when adjusting shutterspeed.
     `disable_led` : Whether to disable the LED. 
     `awb`: Set auto white balance mode.
+    `prefix`: set the file name prefix, default is the host name
+    `folder`: set the destination folder, default is /home/pi/pictures
   """
   def __init__(self, config_map={}):
     self.w = config_map.get('w', 1296)
@@ -45,6 +47,8 @@ class timelapse_config(object):
     self.targetBrightness = config_map.get('targetBrightness', 128)
     self.maxdelta = config_map.get('maxdelta', 100)
     self.awb = config_map.get('awb', 'auto')
+    self.prefix = config_map.get('prefix', '')
+    self.folder = config_map.get('folder', '/home/pi/pictures')
 
     # Setting the maxss under one second prevents flipping into a slower camera mode.
     self.maxss = config_map.get('maxss', 999000)
@@ -86,6 +90,8 @@ class timelapse_config(object):
       'gamma': self.gamma,
       'disable_led': self.disable_led,
       'awb': self.awb,
+      'prefix' : self.prefix,
+      'folder' : self.folder,
     }
 
 class timelapse_state(object):
@@ -138,6 +144,9 @@ class timelapse(object):
     hostname = f.read().strip().replace(' ','')
     f.close()
     self.hostname = hostname
+    
+    if self.config.prefix=="":
+        self.config.prefix=self.hostname
 
     # We consider shutterspeeds as a floating point number between 0 and 1,
     # denoting position between the max and min shutterspeed.
@@ -352,7 +361,7 @@ class timelapse(object):
       self.socket.send(command)
 
       #Take a picture.
-      filename = ('/home/pi/pictures/%s_%s.jpg' % (self.hostname, dtime))
+      filename = ('%s/%s_%s.jpg' % (self.config.folder, self.config.prefix, dtime))
       self.shoot(filename=filename)
 
       loopend = time.time()
@@ -441,6 +450,10 @@ def main(argv):
                                   'horizon', 'tungsten', 'fluorescent', 'incandescent',
                                   'flash'],
                          help='Set auto white balance, default=off.' )
+    parser.add_argument( '-p', '--prefix', default='', type=str,
+                         help='Specify the file name prefix, default is the host name')
+    parser.add_argument( '-f', '--folder', default='/home/pi/pictures', type=str,
+                         help='Specify the folder for saving the pictures, default is /home/pi/pictures')
 
     try:
         os.listdir('/home/pi/pictures')
@@ -458,6 +471,8 @@ def main(argv):
       'maxdelta': args.delta,
       'iso': args.iso,
       'awb' : args.awb,
+      'prefix' : args.prefix,
+      'folder' : args.folder,
       # Add more configuration options here, if desired.
     }
 
