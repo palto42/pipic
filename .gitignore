@@ -43,4 +43,5 @@ nosetests.xml
 **/settings
 **/djpilapse.db
 
-
+# test pictures
+*.jpg
