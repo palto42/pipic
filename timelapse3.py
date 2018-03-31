@@ -4,16 +4,20 @@ Python3 version of timeplase.py
 """
 
 from PIL import Image
-import os, sys, argparse
+import os
+import sys
+import argparse
 import subprocess
 import time
 import math
 import zmq
-import io, picamera
+import io
+import picamera
 from fractions import Fraction
 
+
 class timelapse_config(object):
-  """Config Options:
+    """Config Options:
     `w` : Width of images.
     `h` : Height of images.
     `interval` : Interval of shots, in seconds.  Recommended minimum is 10s.
@@ -21,85 +25,87 @@ class timelapse_config(object):
       Set to 0 for no maximum.
     `maxshots` : Maximum number of pictures to take.  Set to 0 for no maximum.
     `targetBrightness` : Desired brightness of images, on a scale of 0 to 255.
-    `maxdelta` : Allowed variance from target brightness.  Discards images that 
-      are more than `maxdelta` from `targetBrightness`.  Set to 256 to keep
-      all images.
+    `maxdelta` : Allowed variance from target brightness.  Discards images
+      that are more than `maxdelta` from `targetBrightness`.  Set to 256 to
+      keep all images.
     `iso` : ISO used for all images.
     `maxss` : maximum shutter speed
     `minss` : minimum shutter speed
     `maxfr` : maximum frame rate
     `minfr` : minimum frame rate
     `metersite` : Chooses a region of the image to use for brightness
-      measurements. One of 'c', 'a', 'l', or 'r', for center, all, left or 
+      measurements. One of 'c', 'a', 'l', or 'r', for center, all, left or
       right.
-    `brightwidth` : number of previous readings to store for choosing next 
+    `brightwidth` : number of previous readings to store for choosing next
       shutter speed.
     `gamma` : determines size of steps to take when adjusting shutterspeed.
-    `disable_led` : Whether to disable the LED. 
+    `disable_led` : Whether to disable the LED.
     `awb`: Set auto white balance mode.
     `fix-wb`: Set white balance mode to fixed (default)
     `dyn-wb`: Set whie balance mode to dynamic
     `prefix`: set the file name prefix, default is the host name
     `folder`: set the destination folder, default is /home/pi/pictures
-  """
-  def __init__(self, config_map={}):
-    self.w = config_map.get('w', 1296)
-    self.h = config_map.get('h', 972)
-    self.iso = config_map.get('iso', 100)
-    self.interval = config_map.get('interval', 15)
-    self.maxtime = config_map.get('maxtime', -1)
-    self.maxshots = config_map.get('maxshots', -1)
-    self.targetBrightness = config_map.get('targetBrightness', 128)
-    self.maxdelta = config_map.get('maxdelta', 100)
-    self.awb = config_map.get('awb', 'auto')
-    self.fixwb = config_map.get('fixwb', True)
-    self.prefix = config_map.get('prefix', '')
-    self.folder = config_map.get('folder', '/home/pi/pictures')
+    """
+    def __init__(self, config_map={}):
+        self.w = config_map.get('w', 1296)
+        self.h = config_map.get('h', 972)
+        self.iso = config_map.get('iso', 100)
+        self.interval = config_map.get('interval', 15)
+        self.maxtime = config_map.get('maxtime', -1)
+        self.maxshots = config_map.get('maxshots', -1)
+        self.targetBrightness = config_map.get('targetBrightness', 128)
+        self.maxdelta = config_map.get('maxdelta', 100)
+        self.awb = config_map.get('awb', 'auto')
+        self.fixwb = config_map.get('fixwb', True)
+        self.prefix = config_map.get('prefix', '')
+        self.folder = config_map.get('folder', '/home/pi/pictures')
 
-    # Setting the maxss under one second prevents flipping into a slower camera mode.
-    self.maxss = config_map.get('maxss', 999000)
-    self.minss = config_map.get('minss', 100)
+        # Setting the maxss under one second prevents flipping into a slower
+        # camera mode.
+        self.maxss = config_map.get('maxss', 999000)
+        self.minss = config_map.get('minss', 100)
 
-    # Note: these should depend on camera model...
-    self.max_fr = config_map.get('minfr', 15)
-    self.min_fr = config_map.get('maxfr', 1)
+        # Note: these should depend on camera model...
+        self.max_fr = config_map.get('minfr', 15)
+        self.min_fr = config_map.get('maxfr', 1)
 
-    # Dynamic adjustment settings.
-    self.brightwidth = config_map.get('brightwidth', 20)
-    self.gamma = config_map.get('gamma', 0.2)
+        # Dynamic adjustment settings.
+        self.brightwidth = config_map.get('brightwidth', 20)
+        self.gamma = config_map.get('gamma', 0.2)
 
-    self.disable_led = config_map.get('disable_led', False)
+        self.disable_led = config_map.get('disable_led', False)
 
-  def floatToSS(self, x):
-    base = int(self.minss + (self.maxss - self.minss) * x)
-    return max(min(base, self.maxss), self.minss)
+    def floatToSS(self, x):
+        base = int(self.minss + (self.maxss - self.minss) * x)
+        return max(min(base, self.maxss), self.minss)
 
-  def SSToFloat(self, ss):
-    base = (float(ss) - self.minss) / (self.maxss - self.minss)
-    return max(min(base, 1.0), 0.0)
+    def SSToFloat(self, ss):
+        base = (float(ss) - self.minss) / (self.maxss - self.minss)
+        return max(min(base, 1.0), 0.0)
 
-  def to_dict(self):
-    return {
-      'w': self.w,
-      'h': self.h,
-      'iso': self.iso,
-      'interval': self.interval,
-      'maxtime': self.maxtime,
-      'maxshots': self.maxshots,
-      'targetBrightness': self.targetBrightness,
-      'maxdelta': self.maxdelta,
-      'maxss': self.maxss,
-      'minss': self.minss,
-      'max_fr': self.max_fr,
-      'min_fr': self.min_fr,
-      'brightwidth': self.brightwidth,
-      'gamma': self.gamma,
-      'disable_led': self.disable_led,
-      'awb': self.awb,
-      'fixwb': self.fixwb,
-      'prefix' : self.prefix,
-      'folder' : self.folder,
-    }
+    def to_dict(self):
+        return {
+            'w': self.w,
+            'h': self.h,
+            'iso': self.iso,
+            'interval': self.interval,
+            'maxtime': self.maxtime,
+            'maxshots': self.maxshots,
+            'targetBrightness': self.targetBrightness,
+            'maxdelta': self.maxdelta,
+            'maxss': self.maxss,
+            'minss': self.minss,
+            'max_fr': self.max_fr,
+            'min_fr': self.min_fr,
+            'brightwidth': self.brightwidth,
+            'gamma': self.gamma,
+            'disable_led': self.disable_led,
+            'awb': self.awb,
+            'fixwb': self.fixwb,
+            'prefix': self.prefix,
+            'folder': self.folder,
+        }
+
 
 class timelapse_state(object):
     """Container class for timelapser state, to allow easy testing.
@@ -109,34 +115,35 @@ class timelapse_state(object):
         self.brData = state_map.get('brData', [])
         # List of shutter speeds for recent images.
         self.xData = state_map.get('xData', [])
-        # Number of pictures taken 
+        # Number of pictures taken
         self.shots_taken = state_map.get('shots_taken', 0)
         # Current framerate
         self.framerate = state_map.get('max_fr', config.max_fr)
         # White balance
-        self.wb = state_map.get('wb', (Fraction(337, 256), Fraction(343, 256)))
+        self.wb = state_map.get('wb', (Fraction(337, 256),
+                                       Fraction(343, 256)))
 
 
 class timelapse(object):
     """
     Timelapser class.
-    Once the timelapser is initialized, use the `findinitialparams` method to find
-    an initial value for shutterspeed to match the targetBrightness.
+    Once the timelapser is initialized, use the `findinitialparams` method to
+    findan initial value for shutterspeed to match the targetBrightness.
     Then run the `timelapser` method to initiate the actual timelapse.
     EXAMPLE::
       T=timelapse()
       T.run_timelapse()
-    
+
     The timelapser broadcasts zmq messages as it takes pictures.
-    The `listen` method sets up the timelapser to listen for signals from 192.168.0.1,
-    and take a shot when a signal is received.
+    The `listen` method sets up the timelapser to listen for signals from
+    192.168.0.1, and take a shot when a signal is received.
     EXAMPLE::
       T=timelapse()
       T.listen()
     """
     def __init__(self, camera, config=None):
-        if config == None:
-          config = timelapse_config({})
+        if config is None:
+            config = timelapse_config({})
         self.config = config
         self.camera = camera
         self.camera.resolution = (config.w, config.h)
@@ -147,34 +154,36 @@ class timelapse(object):
             except Exception as e:
                 print ("Failed to disable LED: " + e)
 
-        f=open('/etc/hostname')
-        hostname = f.read().strip().replace(' ','')
+        f = open('/etc/hostname')
+        hostname = f.read().strip().replace(' ', '')
         f.close()
         self.hostname = hostname
-    
-        if self.config.prefix=="":
-            self.config.prefix=self.hostname
 
-        # We consider shutterspeeds as a floating point number between 0 and 1,
-        # denoting position between the max and min shutterspeed.
-        # These two functions let us convert back and forth between representations.
-    
+        if self.config.prefix == "":
+            self.config.prefix = self.hostname
+
+        # We consider shutterspeeds as a floating point number between 0
+        # and 1, denoting position between the max and min shutterspeed.
+        # These two functions let us convert back and forth between
+        # representations.
+
         self.state = timelapse_state(config)
         self.camera.framerate = self.state.framerate
         # Set desired awb mode (default = auto)
-        print ("Resolution: ",self.camera.resolution)
+        print ("Resolution: ", self.camera.resolution)
         print ('Set AWB mode: ', self.config.awb)
         self.camera.awb_mode = self.config.awb
-        
+
         print ('Finding initial SS....')
         # Give the camera's auto-exposure and auto-white-balance algorithms
         # some time to measure the scene and determine appropriate values
         time.sleep(2)
         # This capture discovers initial AWB and SS.
-        filename = ('%s/%s_try.jpg' % (self.config.folder, self.config.prefix))
+        filename = ('%s/%s_try.jpg' % (self.config.folder,
+                                       self.config.prefix))
         self.camera.capture(filename)
         self.camera.shutter_speed = self.camera.exposure_speed
-        self.state.currentss=self.camera.exposure_speed
+        self.state.currentss = self.camera.exposure_speed
         self.camera.exposure_mode = 'off'
         self.state.wb_gains = self.camera.awb_gains
         print ('WB: ', self.state.wb_gains)
@@ -187,7 +196,7 @@ class timelapse(object):
     # enable awb shade
     #    self.camera.awb_mode = 'shade'
     #    print ("Enabled AWB mode 'shade'")
-    
+
         self.findinitialparams(self.config, self.state)
         print ("Set up timelapser with: ")
         print ("\tmaxtime :\t", config.maxtime)
@@ -201,8 +210,9 @@ class timelapse(object):
 
     def avgbrightness(self, im, config=None):
         """
-        Find the average brightness of the provided image according to the method
-    
+        Find the average brightness of the provided image according to
+        the method
+
         Args:
           im: A PIL image.
           config: A timelapseConfig object.  Defaults to self.config.
@@ -214,7 +224,7 @@ class timelapse(object):
         aa = im.copy()
         if aa.size[0] > 128:
             aa.thumbnail((128, 96), Image.ANTIALIAS)
-        aa = im.convert('L') # Converts to greyscale
+        aa = im.convert('L')  # Converts to greyscale
         (h, w) = aa.size
         pixels = (aa.size[0] * aa.size[1])
         h = aa.histogram()
@@ -226,27 +236,33 @@ class timelapse(object):
         Applies a simple gradient descent to try to correct shutterspeed and
         brightness to match the target brightness.
         """
+
+#         def Adj(x):
+#             return x * (
+#                 1.0 + 1.0 * delta * config.gamma / config.targetBrightness)
+
         if config is None:
             config = self.config
         if state is None:
             state = self.state
-    
+
         delta = config.targetBrightness - state.brData[-1]
-        Adj = lambda v: v * (1.0 + 1.0 * delta * config.gamma
-                             / config.targetBrightness)
+#         Adj = lambda v: v * (1.0 + 1.0 * delta * config.gamma
+#                              / config.targetBrightness)
         x = config.SSToFloat(state.currentss)
-        x = Adj(x)
+        # Adjust x
+        x = x * (1.0 + 1.0 * delta * config.gamma / config.targetBrightness)
         if x < 0:
             x = 0
         if x > 1:
             x = 1
         state.currentss = config.floatToSS(x)
-        #Find an appropriate framerate.
-        #For low shutter speeds, ths can considerably speed up the capture.
+        # Find an appropriate framerate.
+        # For low shutter speeds, ths can considerably speed up the capture.
         FR = Fraction(1000000, state.currentss)
         if FR > config.max_fr:
             FR = Fraction(config.max_fr)
-        if FR < config.min_fr: 
+        if FR < config.min_fr:
             FR = Fraction(config.min_fr)
         state.framerate = FR
 
@@ -258,7 +274,7 @@ class timelapse(object):
             config = self.config
         if state is None:
             state = self.state
-    
+
         # Create the in-memory stream
         stream = io.BytesIO()
         self.camera.ISO = config.iso
@@ -271,8 +287,8 @@ class timelapse(object):
         capend = time.time()
         print (('Exp: %d\tFR: %f\t Capture Time: %f')
                % (self.camera.exposure_speed,
-                  round(float(self.camera.framerate),2),
-                  round(capend-capstart,2)))
+                  round(float(self.camera.framerate), 2),
+                  round(capend-capstart, 2)))
         # "Rewind" the stream to the beginning so we can read its content
         stream.seek(0)
         image = Image.open(stream)
@@ -288,33 +304,34 @@ class timelapse(object):
         if state is None:
             state = self.state
         killtoken = False
-    
-        # Find init params with small pictures and high gamma, to work quickly.
+
+        # Find init params with small pictures and high gamma, to work quickly
         cfg = config.to_dict()
         cfg['w'] = 128
         cfg['h'] = 96
         cfg['gamma'] = 2.0
         init_config = timelapse_config(cfg)
-    
+
         state.brData = [0]
         state.xData = [0]
-    
+
         while abs(config.targetBrightness - state.brData[-1]) > 4:
             im = self.capture(init_config, state)
             state.brData = [self.avgbrightness(im)]
             state.xData = [self.config.SSToFloat(state.currentss)]
-            
-            #Dynamically adjust ss and iso.
+
+            # Dynamically adjust ss and iso.
             self.dynamic_adjust(init_config, state)
-            print (('ss: % 10d\tx: % 6.4f br: % 4d\t' )
-                   % (state.currentss, round(state.xData[-1], 4), round(state.brData[-1], 4)))
+            print (('ss: % 10d\tx: % 6.4f br: % 4d\t')
+                   % (state.currentss, round(state.xData[-1], 4),
+                      round(state.brData[-1], 4)))
             if state.xData[-1] >= 1.0:
-                if killtoken == True:
+                if killtoken:
                     break
                 else:
                     killtoken = True
             elif state.xData[-1] <= 0.0:
-                if killtoken == True:
+                if killtoken:
                     break
                 else:
                     killtoken = True
@@ -329,38 +346,39 @@ class timelapse(object):
         if state is None:
             state = self.state
         im = self.capture(config, state)
-        #Saves file without exif and raster data; reduces file size by 90%,
-        if filename != None:
+        # Saves file without exif and raster data; reduces file size by 90%,
+        if filename is not None:
             im.save(filename)
-        
+
         if not ss_adjust:
             return im
-        
+
         state.lastbr = self.avgbrightness(im)
         if len(state.brData) >= config.brightwidth:
             state.brData = state.brData[1:]
             state.xData = state.xData[1:]
         state.xData.append(self.config.SSToFloat(state.currentss))
         state.brData.append(state.lastbr)
-        
-        #Dynamically adjust ss and iso.
+
+        # Dynamically adjust ss and iso.
         state.avgbr = sum(state.brData) / len(state.brData)
         self.dynamic_adjust(config, state)
         state.shots_taken += 1
-        
+
         delta = config.targetBrightness - state.lastbr
         if abs(delta) > config.maxdelta:
-            #Too far from target brightness.
+            # Too far from target brightness.
             state.shots_taken -= 1
             os.remove(filename)
         return im
-    
+
     def print_stats(self):
         tmpl = 'SS: % 10d\tX: % 8.3f\tBR: % 4d\tShots: % 5d'
         state = self.state
         x = self.config.SSToFloat(state.currentss)
-        print (tmpl % (state.currentss, round(x,2), state.lastbr, state.shots_taken))
-    
+        print (tmpl % (state.currentss, round(x, 2), state.lastbr,
+                       state.shots_taken))
+
     def run_timelapse(self, config=None, state=None):
         """
         Takes pictures at specified interval.
@@ -371,53 +389,55 @@ class timelapse(object):
             state = self.state
         start_time = time.time()
         elapsed = time.time() - start_time
-        
-        #Set up broadcast for zmq.
+
+        # Set up broadcast for zmq.
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
         self.socket.bind("tcp://*:5556")
-    
-        while ((elapsed < config.maxtime or config.maxtime == -1) 
-               and (state.shots_taken < config.maxshots 
-                    or config.maxshots == -1)):
+
+        while ((elapsed < config.maxtime or config.maxtime == -1) and
+               (state.shots_taken < config.maxshots or
+               config.maxshots == -1)):
             loopstart = time.time()
-            dtime = subprocess.check_output(['date', '+%y%m%d_%T']).strip().decode("utf-8")
+            dtime = subprocess.check_output(
+                ['date', '+%y%m%d_%T']).strip().decode("utf-8")
             dtime = dtime.replace(':', '.')
-            #Broadcast options for this picture on zmq.
-            command='0 shoot {} {} {} {}'.format(config.w, config.h, 
-                                                 state.currentss, dtime)
+            # Broadcast options for this picture on zmq.
+            command = '0 shoot {} {} {} {}'.format(config.w, config.h,
+                                                   state.currentss, dtime)
             self.socket.send_string(command)
-        
-            #Take a picture.
-            filename = ('%s/%s_%s.jpg' % (self.config.folder, self.config.prefix, dtime))
+
+            # Take a picture.
+            filename = ('%s/%s_%s.jpg' % (self.config.folder,
+                                          self.config.prefix, dtime))
             self.shoot(filename=filename)
-        
+
             loopend = time.time()
             x = config.SSToFloat(state.currentss)
             self.print_stats()
-        
-            #Wait for next shot.
+
+            # Wait for next shot.
             time.sleep(max([0, config.interval - (loopend - loopstart)]))
-    
+
         self.socket.close()
-    
+
     def listen(self):
         """
-        Run the timelapser in listen mode.  Listens for ZMQ messages and shoots
-        accordingly.
+        Run the timelapser in listen mode.  Listens for ZMQ messages and
+        shoots accordingly.
         """
-        #  Socket to talk to server
+        # Socket to talk to server
         context = zmq.Context()
         socket = context.socket(zmq.SUB)
         socket.connect("tcp://192.168.0.1:5556")
         channel = "0"
         socket.setsockopt(zmq.SUBSCRIBE, channel)
-        
-        #Get hostname
-        f=open('/etc/hostname')
-        hostname=f.read().strip().replace(' ','')
+
+        # Get hostname
+        f = open('/etc/hostname')
+        hostname = f.read().strip().replace(' ', '')
         f.close()
-        
+
         while True:
             command = socket.recv()
             command = command.split(" ")
@@ -425,75 +445,82 @@ class timelapse(object):
             if command[1] == "quit":
                 break
             elif command[1] == "shoot":
-                # TODO: This is currently ignoring the various config params from
-                # the sender...
+                # TODO: This is currently ignoring the various config params
+                # from the sender...
                 [ch, com, w, h, ss, iso, dtime] = command
                 filename = ('/home/pi/pictures/%s_%s.jpg' % (hostname, dtime))
                 self.shoot(filename)
                 self.print_stats
-        
+
         socket.close()
         return True
 
 
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 
 
 def main(argv):
-
-
-    parser = argparse.ArgumentParser(description='Timelapse tool for the Raspberry Pi.')
-    parser.add_argument( '-W', '--width', default=1286, type=int,
-                         help='Set image width.' )
-    parser.add_argument( '-H', '--height', default=972, type=int,
-                         help='Set image height.' )
-    parser.add_argument( '-i', '--interval', default=15, type=int,
-                         help='Set photo interval in seconds.  \n'
-                         'Recommended miniumum is 6.' )
-    parser.add_argument( '-t', '--maxtime', default=-1, type=int,
-                         help='Maximum duration of timelapse in minutes.\nDefault is -1, '
-                         'for no maximum duration.' )
-    parser.add_argument( '-n', '--maxshots', default=-1, type=int,
-                         help='Maximum number of photos to take.\nDefault is -1, '
-                         'for no maximum.' )
-    parser.add_argument( '-b', '--brightness', default=128, type=int, 
-                         help='Target average brightness of image, on a scale of 1 to 255.\n'
-                         'Default is 128.' )
-    parser.add_argument( '-d', '--delta', default=128, type=int,
-                         help='Maximum allowed distance of photo brightness from target '
-                         'brightness; discards photos too far from the target.  '
-                         'This is useful for autmatically discarding late-night shots.\n'
-                         'Default is 128; Set to 256 to keep all images.' )
-    parser.add_argument( '-m', '--metering', default='a', type=str,
-                         choices=['a','c','l','r'],
-                         help='Where to average brightness for brightness calculations.\n'
-                         '"a" measures the whole image, "c" uses a window at the center,'
-                         ' "l" meters a strip at the left, "r" uses a strip at the right.' )
-    parser.add_argument( '-L', '--listen', action='store_true', 
-                         help='Sets the timelapser to listen mode; listens for a master '
-                         'timelapser to tell it when to shoot.' )
-    parser.add_argument( '-I', '--iso', default=100, type=int, help='Set ISO.' )
-    parser.add_argument( '-a', '--awb', default='off', type=str,  
-                         choices=['auto', 'off', 'sunllight','shade','cloudy', 'sunlight', 
-                                  'horizon', 'tungsten', 'fluorescent', 'incandescent',
-                                  'flash'],
-                         help='Set auto white balance, default=off.' )
-    parser.add_argument( '--fix-wb', dest='fixwb', action='store_true',
-                         help='Set the white balance mode to fixed after initialisation (default)')
-    parser.add_argument( '--dyn-wb', dest='fixwb', action='store_false',
-                         help='Set the white balance mode to dynamic after initialisation')
+    parser = argparse.ArgumentParser(
+        description='Timelapse tool for the Raspberry Pi.')
+    parser.add_argument('-W', '--width', default=1286, type=int,
+                        help='Set image width.')
+    parser.add_argument('-H', '--height', default=972, type=int,
+                        help='Set image height.')
+    parser.add_argument('-i', '--interval', default=15, type=int,
+                        help='Set photo interval in seconds.  \n'
+                        'Recommended miniumum is 6.')
+    parser.add_argument('-t', '--maxtime', default=-1, type=int,
+                        help='Maximum duration of timelapse in minutes.\n'
+                        'Default is -1, for no maximum duration.')
+    parser.add_argument('-n', '--maxshots', default=-1, type=int,
+                        help='Maximum number of photos to take.\n'
+                        'Default is -1, for no maximum.')
+    parser.add_argument('-b', '--brightness', default=128, type=int,
+                        help='Target average brightness of image, on a scale'
+                        ' of 1 to 255.\nDefault is 128.')
+    parser.add_argument('-d', '--delta', default=128, type=int,
+                        help='Maximum allowed distance of photo brightness '
+                        'from target brightness; discards photos too far '
+                        'from the target.  This is useful for autmatically '
+                        'discarding late-night shots.\nDefault is 128; Set '
+                        'to 256 to keep all images.')
+    parser.add_argument('-m', '--metering', default='a', type=str,
+                        choices=['a', 'c', 'l', 'r'],
+                        help='Where to average brightness for brightness '
+                        'calculations.\n"a" measures the whole image, "c" '
+                        'uses a window at the center, "l" meters a strip at '
+                        'the left, "r" uses a strip at the right.')
+    parser.add_argument('-L', '--listen', action='store_true',
+                        help='Sets the timelapser to listen mode; listens '
+                        'for a master timelapser to tell it when to shoot.')
+    parser.add_argument('-I', '--iso', default=100, type=int,
+                        help='Set ISO.')
+    parser.add_argument('-a', '--awb', default='off', type=str,
+                        choices=['auto', 'off', 'sunllight', 'shade', 'cloudy',
+                                 'sunlight', 'horizon', 'tungsten',
+                                 'fluorescent', 'incandescent', 'flash'],
+                        help='Set auto white balance, default=off.')
+    parser.add_argument('--fix-wb', dest='fixwb', action='store_true',
+                        help='Set the white balance mode to fixed after '
+                        'initialisation (default)')
+    parser.add_argument('--dyn-wb', dest='fixwb', action='store_false',
+                        help='Set the white balance mode to dynamic after '
+                        'initialisation')
     parser.set_defaults(fixwb=True)
-    parser.add_argument( '-p', '--prefix', default='', type=str,
-                         help='Specify the file name prefix, default is the host name')
-    parser.add_argument( '-f', '--folder', default='/home/pi/pictures', type=str,
-                         help='Specify the folder for saving the pictures, default is /home/pi/pictures')
+    parser.add_argument('-p', '--prefix', default='', type=str,
+                        help='Specify the file name prefix, default is the '
+                        'host name')
+    parser.add_argument('-f', '--folder', default='/home/pi/pictures',
+                        type=str,
+                        help='Specify the folder for saving the pictures, '
+                        'default is /home/pi/pictures')
 
     try:
         os.listdir('/home/pi/pictures')
     except:
         os.mkdir('/home/pi/pictures')
 
-    args=parser.parse_args()
+    args = parser.parse_args()
     cfg = {
         'w': args.width,
         'h': args.height,
@@ -503,10 +530,10 @@ def main(argv):
         'targetBrightness': args.brightness,
         'maxdelta': args.delta,
         'iso': args.iso,
-        'awb' : args.awb,
-        'prefix' : args.prefix,
-        'folder' : args.folder,
-        'fixwb' : args.fixwb,
+        'awb': args.awb,
+        'prefix': args.prefix,
+        'folder': args.folder,
+        'fixwb': args.fixwb,
         # Add more configuration options here, if desired.
     }
 
@@ -523,7 +550,7 @@ def main(argv):
 
     return True
 
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     main(sys.argv[1:])

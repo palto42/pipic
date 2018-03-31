@@ -48,3 +48,6 @@ nosetests.xml
 
 # nohup
 nohup*.*
+
+# backups
+*.bak
