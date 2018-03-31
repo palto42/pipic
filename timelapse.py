@@ -34,6 +34,8 @@ class timelapse_config(object):
     `gamma` : determines size of steps to take when adjusting shutterspeed.
     `disable_led` : Whether to disable the LED. 
     `awb`: Set auto white balance mode.
+    `fix-wb`: Set white balance mode to fixed (default)
+    `dyn-wb`: Set whie balance mode to dynamic
     `prefix`: set the file name prefix, default is the host name
     `folder`: set the destination folder, default is /home/pi/pictures
   """
@@ -47,6 +49,7 @@ class timelapse_config(object):
     self.targetBrightness = config_map.get('targetBrightness', 128)
     self.maxdelta = config_map.get('maxdelta', 100)
     self.awb = config_map.get('awb', 'auto')
+    self.fixwb = config_map.get('fixwb', True)
     self.prefix = config_map.get('prefix', '')
     self.folder = config_map.get('folder', '/home/pi/pictures')
 
@@ -90,6 +93,7 @@ class timelapse_config(object):
       'gamma': self.gamma,
       'disable_led': self.disable_led,
       'awb': self.awb,
+      'fixwb': self.fixwb,
       'prefix' : self.prefix,
       'folder' : self.folder,
     }
@@ -169,9 +173,12 @@ class timelapse(object):
     self.camera.exposure_mode = 'off'
     self.state.wb_gains = self.camera.awb_gains
     print 'WB: ', self.state.wb_gains
-    self.camera.awb_mode = 'off'
-    self.camera.awb_gains = self.state.wb_gains
-
+    if self.config.fixwb:
+        self.camera.awb_mode = 'off'
+        self.camera.awb_gains = self.state.wb_gains
+        print 'Disabled dynamic white balance'
+    else:
+        print 'Using dynamic white balance mode'
 # enable awb shade
 #    self.camera.awb_mode = 'shade'
 #    print "Enabled AWB mode 'shade'"
@@ -450,6 +457,11 @@ def main(argv):
                                   'horizon', 'tungsten', 'fluorescent', 'incandescent',
                                   'flash'],
                          help='Set auto white balance, default=off.' )
+    parser.add_argument( '--fix-wb', dest='fixwb', action='store_true',
+                         help='Set the white balance mode to fixed after initialisation (default)')
+    parser.add_argument( '--dyn-wb', dest='fixwb', action='store_false',
+                         help='Set the white balance mode to dynamic after initialisation')
+    parser.set_defaults(fixwb=True)
     parser.add_argument( '-p', '--prefix', default='', type=str,
                          help='Specify the file name prefix, default is the host name')
     parser.add_argument( '-f', '--folder', default='/home/pi/pictures', type=str,
@@ -473,6 +485,7 @@ def main(argv):
       'awb' : args.awb,
       'prefix' : args.prefix,
       'folder' : args.folder,
+      'fixwb' : args.fixwb,
       # Add more configuration options here, if desired.
     }
 
