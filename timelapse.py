@@ -167,7 +167,8 @@ class timelapse(object):
     # some time to measure the scene and determine appropriate values
     time.sleep(2)
     # This capture discovers initial AWB and SS.
-    self.camera.capture('try.jpg')
+    filename = ('%s/%s_try.jpg' % (self.config.folder, self.config.prefix))
+    self.camera.capture(filename)
     self.camera.shutter_speed = self.camera.exposure_speed
     self.state.currentss=self.camera.exposure_speed
     self.camera.exposure_mode = 'off'
