@@ -14,7 +14,13 @@ import zmq
 import io
 import picamera
 from fractions import Fraction
+import logging
 
+# set initial logging to stderr, level ERROR
+logging.basicConfig(
+    stream=sys.stderr,
+    format='%(asctime)s - %(levelname)s - %(module)s - %(message)s',
+    level=logging.ERROR)
 
 class timelapse_config(object):
     """Config Options:
@@ -152,7 +158,7 @@ class timelapse(object):
             try:
                 camera.led = False
             except Exception as e:
-                print ("Failed to disable LED: " + e)
+                logging.error ("Failed to disable LED: %s", e)
 
         f = open('/etc/hostname')
         hostname = f.read().strip().replace(' ', '')
@@ -170,11 +176,11 @@ class timelapse(object):
         self.state = timelapse_state(config)
         self.camera.framerate = self.state.framerate
         # Set desired awb mode (default = auto)
-        print ("Resolution: ", self.camera.resolution)
-        print ('Set AWB mode: ', self.config.awb)
+        logging.info ("Resolution: %s", self.camera.resolution)
+        logging.info ('Set AWB mode: %s', self.config.awb)
         self.camera.awb_mode = self.config.awb
 
-        print ('Finding initial SS....')
+        logging.info ('Finding initial SS....')
         # Give the camera's auto-exposure and auto-white-balance algorithms
         # some time to measure the scene and determine appropriate values
         time.sleep(2)
@@ -186,24 +192,21 @@ class timelapse(object):
         self.state.currentss = self.camera.exposure_speed
         self.camera.exposure_mode = 'off'
         self.state.wb_gains = self.camera.awb_gains
-        print ('WB: ', self.state.wb_gains)
+        logging.debug ('WB: %s', self.state.wb_gains)
         if self.config.fixwb:
             self.camera.awb_mode = 'off'
             self.camera.awb_gains = self.state.wb_gains
-            print ('Disabled dynamic white balance')
+            logging.info ('Disabled dynamic white balance')
         else:
-            print ('Using dynamic white balance mode')
-    # enable awb shade
-    #    self.camera.awb_mode = 'shade'
-    #    print ("Enabled AWB mode 'shade'")
+            logging.info ('Using dynamic white balance mode')
 
         self.findinitialparams(self.config, self.state)
-        print ("Set up timelapser with: ")
-        print ("\tmaxtime :\t", config.maxtime)
-        print ("\tmaxshots:\t", config.maxshots)
-        print ("\tinterval:\t", config.interval)
-        print ("\tBrightns:\t", config.targetBrightness)
-        print ("\tSize  :\t", config.w, 'x', config.h)
+        logging.debug ("Set up timelapser with: ")
+        logging.debug ("\tmaxtime :\t %s", config.maxtime)
+        logging.debug ("\tmaxshots:\t %s", config.maxshots)
+        logging.debug ("\tinterval:\t %s", config.interval)
+        logging.debug ("\tBrightns:\t %s", config.targetBrightness)
+        logging.debug ("\tSize:\t %sx%s", config.w, config.h)
 
     def __repr__(self):
         return 'A timelapse instance.'
@@ -285,10 +288,10 @@ class timelapse(object):
         capstart = time.time()
         self.camera.capture(stream, format='jpeg')
         capend = time.time()
-        print (('Exp: %d\tFR: %f\t Capture Time: %f')
-               % (self.camera.exposure_speed,
-                  round(float(self.camera.framerate), 2),
-                  round(capend-capstart, 2)))
+        logging.debug ('Exp: %d\tFR: %f\t Capture Time: %f',
+                      self.camera.exposure_speed,
+                      round(float(self.camera.framerate), 2),
+                      round(capend-capstart, 2))
         # "Rewind" the stream to the beginning so we can read its content
         stream.seek(0)
         image = Image.open(stream)
@@ -322,9 +325,10 @@ class timelapse(object):
 
             # Dynamically adjust ss and iso.
             self.dynamic_adjust(init_config, state)
-            print (('ss: % 10d\tx: % 6.4f br: % 4d\t')
-                   % (state.currentss, round(state.xData[-1], 4),
-                      round(state.brData[-1], 4)))
+            logging.debug ('ss: % 10d\tx: % 6.4f br: % 4d',
+                          state.currentss, 
+                          round(state.xData[-1], 4),
+                          round(state.brData[-1], 4))
             if state.xData[-1] >= 1.0:
                 if killtoken:
                     break
@@ -373,11 +377,19 @@ class timelapse(object):
         return im
 
     def print_stats(self):
-        tmpl = 'SS: % 10d\tX: % 8.3f\tBR: % 4d\tShots: % 5d'
         state = self.state
         x = self.config.SSToFloat(state.currentss)
-        print (tmpl % (state.currentss, round(x, 2), state.lastbr,
-                       state.shots_taken))
+
+        if logging.getLogger().getEffectiveLevel() > 10 and state.shots_taken % 10 == 1:  # Status Info only every 10th shot
+            logging.info ('SS: % 10d\tX: % 8.3f\tBR: % 4d\tShots: % 5d',
+                          state.currentss, round(x, 2),
+                          state.lastbr,
+                          state.shots_taken)
+        else:  # Debug
+            logging.debug ('SS: % 10d\tX: % 8.3f\tBR: % 4d\tShots: % 5d',
+                      state.currentss, round(x, 2),
+                      state.lastbr,
+                      state.shots_taken)
 
     def run_timelapse(self, config=None, state=None):
         """
@@ -441,7 +453,7 @@ class timelapse(object):
         while True:
             command = socket.recv()
             command = command.split(" ")
-            print ("Message recieved: " + str(command))
+            logging.debug ("Message recieved: %s",str(command))
             if command[1] == "quit":
                 break
             elif command[1] == "shoot":
@@ -460,6 +472,16 @@ class timelapse(object):
 
 
 def main(argv):
+    
+    loglevel = {
+        'CRITICAL': 50,
+        'ERROR':    40,
+        'WARNING':  30,
+        'INFO':     20,
+        'DEBUG':    10,
+        'NOTSET':    0
+    }
+    
     parser = argparse.ArgumentParser(
         description='Timelapse tool for the Raspberry Pi.')
     parser.add_argument('-W', '--width', default=1286, type=int,
@@ -514,6 +536,12 @@ def main(argv):
                         type=str,
                         help='Specify the folder for saving the pictures, '
                         'default is /home/pi/pictures')
+    parser.add_argument('-l', '--loglevel', default='Error',
+                        type=str,
+                        help='Set the logging level (Error)\n'
+                        '  CRITICAL, ERROR, WARNING, INFO, DEBUG')
+    parser.add_argument('-o', '--logfile', type=str,
+                        help='Set the log file and path')
 
     try:
         os.listdir('/home/pi/pictures')
@@ -534,8 +562,31 @@ def main(argv):
         'prefix': args.prefix,
         'folder': args.folder,
         'fixwb': args.fixwb,
+        #'logging': args.logging,
         # Add more configuration options here, if desired.
     }
+
+        # Set logging level
+    try:
+        logging.getLogger().setLevel(loglevel[args.loglevel.upper()])
+    except:
+        logging.error ('Invalid logging level argument: %s', args.loglevel)
+        args.loglevel = "ERROR"
+
+    if args.logfile is not None:
+        try:
+            logfile = open(args.logfile, 'a')
+            logfile.close()
+            # Remove all handlers associated with the root logger object.
+            for handler in logging.root.handlers[:]:
+                logging.root.removeHandler(handler)
+            # Reconfigure logging again, this time with a file.
+            logging.basicConfig(
+                filename=args.logfile,
+                level=loglevel[args.loglevel.upper()],
+                format='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
+        except:
+            logging.error ("Can't open specified logfile: %s", args.logfile)
 
     try:
         camera = picamera.PiCamera()
